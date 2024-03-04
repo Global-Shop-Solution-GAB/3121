@@ -1,0 +1,524 @@
+Program.Sub.ScreenSU.Start
+gui.F_Order_Assoc..create
+gui.F_Order_Assoc..caption("Sales Order Association")
+gui.F_Order_Assoc..size(6600,3945)
+gui.F_Order_Assoc..position(0,0)
+gui.F_Order_Assoc..event(unload,f_order_assoc_unload)
+gui.F_Order_Assoc..alwaysontop(False)
+gui.F_Order_Assoc..fontname("Arial")
+gui.F_Order_Assoc..fontsize(8)
+gui.F_Order_Assoc..forecolor(0)
+gui.F_Order_Assoc..fontstyle(,,,,)
+gui.F_Order_Assoc..BackColor(-2147483633)
+gui.F_Order_Assoc..controlbox(True)
+gui.F_Order_Assoc..maxbutton(True)
+gui.F_Order_Assoc..minbutton(True)
+gui.F_Order_Assoc..mousepointer(0)
+gui.F_Order_Assoc..moveable(True)
+gui.F_Order_Assoc..sizeable(False)
+gui.F_Order_Assoc..ShowInTaskBar(True)
+gui.F_Order_Assoc..titlebar(True)
+gui.F_Order_Assoc.gsfx_Sales_Orders.create(gsflexgrid)
+gui.F_Order_Assoc.gsfx_Sales_Orders.FixedRows(0)
+gui.F_Order_Assoc.gsfx_Sales_Orders.FixedCols(0)
+gui.F_Order_Assoc.gsfx_Sales_Orders.visible(True)
+gui.F_Order_Assoc.gsfx_Sales_Orders.size(6090,2685)
+gui.F_Order_Assoc.gsfx_Sales_Orders.zorder(0)
+gui.F_Order_Assoc.gsfx_Sales_Orders.position(200,200)
+gui.F_Order_Assoc.gsfx_Sales_Orders.enabled(True)
+gui.F_Order_Assoc.cmd_Save.create(button)
+gui.F_Order_Assoc.cmd_Save.caption("Save")
+gui.F_Order_Assoc.cmd_Save.visible(True)
+gui.F_Order_Assoc.cmd_Save.size(1000,375)
+gui.F_Order_Assoc.cmd_Save.zorder(0)
+gui.F_Order_Assoc.cmd_Save.position(200,3000)
+gui.F_Order_Assoc.cmd_Save.enabled(True)
+gui.F_Order_Assoc.cmd_Save.fontname("Arial")
+gui.F_Order_Assoc.cmd_Save.fontsize(8)
+gui.F_Order_Assoc.cmd_Save.event(click,cmd_save_click)
+
+
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'Coded by: Melinda Keyes
+'Project Start Date: 7/15/2011
+'Quote: 2605
+'Hooks:
+'  POPULATE JB0010GI (16630)
+'  PRE-SAVE JB0010GI Single level WO (16650)
+'  POST-SAVE JB0010GI Single level WO (16651)
+'  SCRIPT-1 JB0010GI Single level WO (16670)
+'  POPULATE BOM BMJ501 BOM WO (17240)
+'  SCRIPT-1 BMJ501 BOM WO (17270)
+'  PRE-SAVE BMJ501 BOM WO (17260)
+'  POST-SAVE BMJ501 BOM WO (17261)
+'Notes:
+'  When clicking the OK button after creating a new work order, a GAB screen will open
+'  displaying all sales order lines (V_ORDER_LINES table) with the same part/location within a grid.
+'  Checkboxes will be available next to each grid line so the user can select/deselect Sales Order lines
+'  they want to associate with this work order.  Clicking OK on this line will finalize this association,
+'  and add a record to a new custom table, ATG_ORDER_WO_ASSOC.
+
+'  This will need to run off the post OK button hook on both JB0010GI (Single level WO) & BMJ501 (BOM Work Order) for New Work Orders only.
+'  This will alsor un off of a Script button on both JB0010GI & BMJ501 in order to associate sales order lines to existing work orders.
+
+'  Note: Sales Order lines and WOs could potentially havea many-to-many relationship ,i.e., one WO may be associated to several Order lines, and one Order line may be associated to many WOs.
+
+'  Note: This project will do nothing other than add a record to this new custom table.
+'  It may be used for reporting purposes only, and will currently have no other use in Global Shop unless otherwise specified.
+
+'select JOB, SUFFIX, DESCRIPTION, PART, LOCATION, CUSTOMER_PO from "JOB_HEADER" order by JOB
+
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sQuery.Declare(String)
+V.Local.sPart.Declare(String)
+V.Local.sLoc.Declare(String)
+V.Local.sRev.Declare(String)
+V.Local.bNew.Declare(Boolean)
+V.Local.iHndl.Declare(Long)
+V.Local.sFileName.Declare(String)
+V.Local.bExists.Declare(Boolean)
+V.Local.sReturn.Declare(String)
+V.Local.sLine.Declare(String)
+V.Local.bOpen.Declare(Boolean)
+
+V.Global.sWO.Declare(String)
+V.Global.sSuffix.Declare(String)
+V.Global.sCustPO.Declare(String)
+
+'New work orders should be able to associate on save only, not script 1
+F.Intrinsic.String.IsInString(V.Caller.Switches,"N",True,V.Local.bNew)
+F.Intrinsic.String.IsInString(V.Caller.Switches,"O",True,V.Local.bOpen)
+F.Intrinsic.Control.If(V.Local.bNew,=,True)
+
+	'Single-level new: Dont change the txt on the script 1 button
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16630)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	'Single-level new: Exit if the script 1 button is clicked in new mode
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16670)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	'Single lvl work order - Pre Save
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16650)
+		V.Global.sWO.Set(V.Passed.000003)
+		F.Intrinsic.Control.If(V.Global.sWO,<>,"")
+			V.Global.sSuffix.Set(V.Passed.000004)
+			V.Local.sRev.Set(V.Passed.000013)
+			F.Intrinsic.File.GetHandle(V.Local.iHndl)
+			F.Intrinsic.String.Concat(V.Caller.TempDir,"\ATG_13851_ORDER_WO_ASSOC.txt",V.Local.sFileName)
+			F.Intrinsic.File.Exists(V.Local.sFileName,V.Local.bExists)
+			F.Intrinsic.Control.If(V.Local.bExists,=,True)
+				F.Intrinsic.File.DeleteFile(V.Local.sFileName)
+				F.Intrinsic.File.OpenForAppend(V.Local.sFileName,V.Local.iHndl)
+			F.Intrinsic.Control.Else
+				F.Intrinsic.File.OpenForAppend(V.Local.sFileName,V.Local.iHndl)
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.String.Concat(V.Global.sWO,"*!*",V.Global.sSuffix,V.Local.sLine)
+			F.Intrinsic.File.WriteLine(V.Local.iHndl,V.Local.sLine)
+			F.Intrinsic.File.CloseFile(V.Local.iHndl)
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.Else
+			F.Intrinsic.UI.Msgbox("Please enter a work order number before continuing")
+			V.Passed.777777.Set(1)
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+
+	'Single lvl work order - Post Save
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16651)
+		F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+		F.Intrinsic.String.Concat(V.Caller.TempDir,"\ATG_13851_ORDER_WO_ASSOC.txt",V.Local.sFileName)
+		F.Intrinsic.File.Exists(V.Local.sFileName,V.Local.bExists)
+		F.Intrinsic.Control.If(V.Local.bExists,=,True)
+			F.Intrinsic.File.File2String(V.Local.sFileName,V.Local.sReturn)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Control.RaiseError(000001,"ATG_13851_ORDER_WO_ASSOC.txt not found in Temp directory.")
+		F.Intrinsic.Control.EndIf
+		F.Intrinsic.String.Split(V.Local.sReturn,"*!*",V.Local.sReturn)
+		V.Global.sWO.Set(V.Local.sReturn(0))
+		V.Global.sSuffix.Set(V.Local.sReturn(1))
+		F.Intrinsic.String.StripCharacters(V.Global.sSuffix,V.Global.sSuffix)
+		F.Intrinsic.String.Concat("SELECT PART, LOCATION, CUSTOMER_PO FROM V_JOB_HEADER WHERE JOB = '",V.Global.sWO,"' AND SUFFIX = '",V.Global.sSuffix,"'",V.Local.sQuery)
+		F.ODBC.Connection!conX.CloseRecordsets
+		F.ODBC.Connection!conX.OpenRecordsetRO("rstJobs",V.Local.sQuery)
+		F.Intrinsic.Control.If(V.ODBC.conX!rstJobs.EOF,<>,True)
+			V.Local.sPart.Set(V.ODBC.conX!rstJobs.FieldValTrim!PART)
+			V.Local.sLoc.Set(V.ODBC.conX!rstJobs.FieldValTrim!LOCATION)
+			V.Global.sCustPO.Set(V.ODBC.conX!rstJobs.FieldValTrim!CUSTOMER_PO)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Control.RaiseError(000002,"Record for this work order was not saved to the database.")
+			V.Passed.777777.Set(1)
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.EndIf
+		F.ODBC.conX!rstJobs.Close
+		F.Intrinsic.String.Concat("SELECT ORDER_NO, RECORD_NO, CUSTOMER FROM ORDER_LINES WHERE RECORD_TYPE = 'L' AND PART = '",V.Local.sPart,"' AND LOCATION = '",V.Local.sLoc,"' ORDER BY ORDER_NO",V.Local.sQuery)
+		'F.Intrinsic.UI.Msgbox(V.Local.sQuery)
+		F.Intrinsic.Control.CallSub(Associate,"sQuery",V.Local.sQuery)
+	F.Intrinsic.Control.EndIf
+
+	'BOM new: change the txt on the script 1 button
+	F.Intrinsic.Control.If(V.Caller.Hook,=,17240)
+		V.Passed.000068.Set("Asc Orders")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	'BOM new: Associate if the script 1 button is clicked in new mode
+	F.Intrinsic.Control.If(V.Caller.Hook,=,17270)
+		F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+		V.Global.sWO.Set(V.Passed.000013)
+		F.Intrinsic.Control.If(V.Global.sWO.Trim,<>,"")
+			V.Global.sSuffix.Set("000")
+			V.Local.sPart.Set(V.Passed.000007)
+			V.Local.sLoc.Set(V.Passed.000010)
+			V.Local.sRev.Set(V.Passed.000008)
+			V.Global.sCustPO.Set(V.Passed.000015)
+			F.Intrinsic.Control.If(V.Local.sPart.Trim,<>,"")
+				F.Intrinsic.Control.If(V.Local.sRev.Trim,<>,"")
+					F.Intrinsic.String.Concat(V.Local.sPart,"%",V.Local.sRev,V.Local.sPart)
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.Else
+				F.Intrinsic.UI.Msgbox("Please select a BOM parent before continuing.")
+				F.Intrinsic.Control.End
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.String.Concat("SELECT ORDER_NO, RECORD_NO, CUSTOMER FROM ORDER_LINES WHERE RECORD_TYPE = 'L' AND PART LIKE '",V.Local.sPart,"' AND LOCATION = '",V.Local.sLoc,"' ORDER BY ORDER_NO",V.Local.sQuery)
+			'F.Intrinsic.UI.Msgbox(V.Local.sQuery)
+			F.Intrinsic.Control.CallSub(Associate,"sQuery",V.Local.sQuery)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.UI.Msgbox("Please enter a work order number before continuing.")
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+
+	'BOM work order - Pre Save	
+	F.Intrinsic.Control.If(V.Caller.Hook,=,17260)
+'		V.Global.sWO.Set(V.Passed.000013)
+'		V.Local.sRev.Set(V.Passed.000008)
+'		F.Intrinsic.Control.If(V.Global.sWO,<>,"")
+'			F.Intrinsic.File.GetHandle(V.Local.iHndl)
+'			F.Intrinsic.String.Concat(V.Caller.TempDir,"\ATG_ORDER_WO_ASSOC.txt",V.Local.sFileName)
+'			F.Intrinsic.File.Exists(V.Local.sFileName,V.Local.bExists)
+'			F.Intrinsic.Control.If(V.Local.bExists,=,True)
+'				F.Intrinsic.File.DeleteFile(V.Local.sFileName)
+'				F.Intrinsic.File.OpenForAppend(V.Local.sFileName,V.Local.iHndl)
+'			F.Intrinsic.Control.Else
+'				F.Intrinsic.File.OpenForAppend(V.Local.sFileName,V.Local.iHndl)
+'			F.Intrinsic.Control.EndIf
+'			F.Intrinsic.String.Concat(V.Global.sWO,"*!*",V.Local.sLine)
+'			F.Intrinsic.File.WriteLine(V.Local.iHndl,V.Local.sLine)
+'			F.Intrinsic.File.CloseFile(V.Local.iHndl)
+'			F.Intrinsic.Control.End
+'		F.Intrinsic.Control.Else
+'			F.Intrinsic.UI.Msgbox("Please enter a work order number before continuing")
+'			V.Passed.777777.Set(1)
+'			F.Intrinsic.Control.End
+'		F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	'BOM work order - Post Save
+	F.Intrinsic.Control.If(V.Caller.Hook,=,17261)
+'		F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+'		F.Intrinsic.String.Concat(V.Caller.TempDir,"\ATG_ORDER_WO_ASSOC.txt",V.Local.sFileName)
+'		F.Intrinsic.File.Exists(V.Local.sFileName,V.Local.bExists)
+'		F.Intrinsic.Control.If(V.Local.bExists,=,True)
+'			F.Intrinsic.File.File2String(V.Local.sFileName,V.Local.sReturn)
+'		F.Intrinsic.Control.Else
+'			F.Intrinsic.Control.RaiseError(000001,"ATG_ORDER_WO_ASSOC.txt not found in Temp directory.")
+'		F.Intrinsic.Control.EndIf
+'		F.Intrinsic.String.Split(V.Local.sReturn,"*!*",V.Local.sReturn)
+'		V.Global.sWO.Set(V.Local.sReturn(0))
+'		F.Intrinsic.String.Concat("SELECT SUFFIX, PART, LOCATION, CUSTOMER_PO FROM JOB_HEADER WHERE JOB = '",V.Global.sWO,"'",V.Local.sQuery)
+'		F.ODBC.Connection!conX.CloseRecordsets
+'		F.ODBC.Connection!conX.OpenRecordsetRO("rstJobs",V.Local.sQuery)
+'		F.Intrinsic.Control.If(V.ODBC.conX!rstJobs.EOF,=,True)
+'			F.Intrinsic.Control.RaiseError(000002,"Record for this work order was not saved to the database.")
+'			V.Passed.777777.Set(1)
+'			F.Intrinsic.Control.End
+'		F.Intrinsic.Control.Else
+'			F.Intrinsic.Control.DoUntil(V.ODBC.conX!rstJobs.EOF,=,True)
+'				V.Global.sSuffix.Set(V.ODBC.conX!rstJobs.FieldValTrim!SUFFIX)
+'				V.Local.sPart.Set(V.ODBC.conX!rstJobs.FieldValTrim!PART)
+'				V.Local.sLoc.Set(V.ODBC.conX!rstJobs.FieldValTrim!LOCATION)
+'				V.Global.sCustPO.Set(V.ODBC.conX!rstJobs.FieldValTrim!CUSTOMER_PO)
+'
+'				F.Intrinsic.String.Concat("SELECT ORDER_NO, RECORD_NO, CUSTOMER FROM ORDER_LINES WHERE RECORD_TYPE = 'L' AND PART = '",V.Local.sPart,"' AND LOCATION = '",V.Local.sLoc,"' ORDER BY ORDER_NO",V.Local.sQuery)
+'				'F.Intrinsic.UI.Msgbox(V.Local.sQuery)
+'				F.Intrinsic.Control.CallSub(Associate,"sQuery",V.Local.sQuery)
+'
+'				F.ODBC.conX!rstJobs.MoveNext
+'			F.Intrinsic.Control.Loop
+'		F.Intrinsic.Control.EndIf
+'		F.ODBC.conX!rstJobs.Close
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+'Opened work orders should be able to associate on script 1 button, not save
+F.Intrinsic.Control.ElseIf(V.Local.bOpen,=,True)
+
+	'Change the script 1 button on entry
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16630)
+		V.Passed.000091.Set("Asc Orders")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	'Exit if the pre-save hook is fired in Open mode
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16650)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	'Exit if the post-save hook is fired in Open mode
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16651)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+
+	'Open work order (single lvl screen, no BOM screen for open) - Script 1
+	F.Intrinsic.Control.If(V.Caller.Hook,=,16670)
+		F.ODBC.Connection!conX.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+		V.Global.sWO.Set(V.Passed.000003)
+		F.Intrinsic.Control.If(V.Global.sWO,<>,"")
+			V.Global.sSuffix.Set(V.Passed.000004)
+			V.Local.sPart.Set(V.Passed.000012)
+			V.Local.sLoc.Set(V.Passed.000015)
+			V.Local.sRev.Set(V.Passed.000013)
+			V.Global.sCustPO.Set(V.Passed.000010)
+			F.Intrinsic.Control.If(V.Local.sPart,<>,"")
+				F.Intrinsic.Control.If(V.Local.sRev,<>,"")
+					F.Intrinsic.String.Concat(V.Local.sPart,"%",V.Local.sRev,V.Local.sPart)
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.String.Concat("SELECT ORDER_NO, RECORD_NO, CUSTOMER FROM ORDER_LINES WHERE RECORD_TYPE = 'L' AND PART LIKE '",V.Local.sPart,"' AND LOCATION = '",V.Local.sLoc,"' ORDER BY ORDER_NO",V.Local.sQuery)
+			'F.Intrinsic.UI.Msgbox(V.Local.sQuery)
+			F.Intrinsic.Control.CallSub(Associate,"sQuery",V.Local.sQuery)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.UI.Msgbox("Please enter a work order number before continuing.")
+			F.Intrinsic.Control.End
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Else
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: ATG_13851_ORDER_WO_ASSOC.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError
+F.Intrinsic.UI.Msgbox(V.Local.sErro
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.Main.End
+
+program.sub.cmd_save_click.start
+'Write out all specified sales order to work order association records to ATG_ORDER_WO_ASSOC table
+
+F.Intrinsic.Control.SetErrorHandler("cmd_save_click_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.bChecked.Declare(Boolean)
+V.Local.bExists.Declare(Boolean)
+V.Local.sRow.Declare(String)
+V.Local.iRow.Declare(Long)
+V.Local.iRows.Declare(Long)
+V.Local.sQuery.Declare(String)
+
+V.Local.iRows.Set(V.Screen.F_Order_Assoc!gsfx_Sales_Orders.Rows)
+F.Intrinsic.Math.Sub(V.Local.iRows,1,V.Local.iRows)
+
+F.Intrinsic.Control.For(V.Local.iRow,1,V.Local.iRows,1)
+	Gui.F_Order_Assoc.gsfx_Sales_Orders.ReadRow(V.Local.iRow,V.Local.sRow)
+	F.Intrinsic.String.Split(V.Local.sRow,"*!*",V.Local.sRow)
+	F.Intrinsic.String.Concat("SELECT * FROM ATG_13851_ORDER_WO_ASSOC WHERE ",V.Ambient.DblQuote,"ORDER",V.Ambient.DblQuote," = '",V.Local.sRow(1),"' AND ORDER_LINE = '",V.Local.sRow(2),"' AND JOB = '",V.Global.sWO,"' AND SUFFIX = '",V.Global.sSuffix,"'",V.Local.sQuery)
+	F.ODBC.Connection!conX.OpenLocalRecordsetRW("rstAssoc",V.Local.sQuery)
+	F.Intrinsic.Control.If(V.ODBC.conX!rstAssoc.EOF,=,True)
+		F.Intrinsic.Control.If(V.Local.sRow(0),=,1)
+			F.ODBC.conX!rstAssoc.AddNew
+			F.ODBC.conX!rstAssoc.Set!ORDER(V.Local.sRow(1))
+			F.ODBC.conX!rstAssoc.Set!ORDER_LINE(V.Local.sRow(2))
+			F.ODBC.conX!rstAssoc.Set!CUSTOMER_PO(V.Global.sCustPO)
+			F.ODBC.conX!rstAssoc.Set!JOB(V.Global.sWO)
+			F.ODBC.conX!rstAssoc.Set!SUFFIX(V.Global.sSuffix)
+			F.ODBC.conX!rstAssoc.Update
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.If(V.Local.sRow(0),<>,1)
+			F.Intrinsic.String.Concat("DELETE FROM ATG_13851_ORDER_WO_ASSOC WHERE ",V.Ambient.DblQuote,"ORDER",V.Ambient.DblQuote," = '",V.Local.sRow(1),"' AND ORDER_LINE = '",V.Local.sRow(2),"' AND JOB = '",V.Global.sWO,"' AND SUFFIX = '",V.Global.sSuffix,"'",V.Local.sQuery)
+			F.ODBC.Connection!conX.Execute(V.Local.sQuery)
+			F.ODBC.conX!rstAssoc.Update
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+	F.ODBC.conX!rstAssoc.Close
+F.Intrinsic.Control.Next(V.Local.iRow)
+
+F.Intrinsic.Control.CallSub(F_order_assoc_unload)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("cmd_save_click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: ATG_13851_ORDER_WO_ASSOC.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+program.sub.cmd_save_click.end
+
+program.sub.f_order_assoc_unload.start
+'Close the database connection and exit the program
+F.Intrinsic.Control.SetErrorHandler("f_order_assoc_unload_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+
+F.ODBC.Connection!conX.Close
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("f_order_assoc_unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: ATG_13851_ORDER_WO_ASSOC.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+program.sub.f_order_assoc_unload.end
+
+Program.Sub.create_table.Start
+' If the ATG_ORDER_WO_ASSOC table doesn't already exists, create it
+F.Intrinsic.Control.SetErrorHandler("create_table_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sQuery.Declare(String)
+V.Local.sFileName.Declare(String)
+V.Local.bExists.Declare(Boolean)
+
+F.Intrinsic.String.Concat(V.Caller.PluginsDir,"\GAB\GAS\ATG_13851_ORDER_WO_ASSOC.sql",V.Local.sFileName)
+F.Intrinsic.File.Exists(V.Local.sFileName,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,True)
+	F.Intrinsic.File.File2String(V.Local.sFileName,V.Local.sQuery)
+	F.ODBC.Connection!conX.Execute(V.Local.sQuery)
+F.Intrinsic.Control.Else
+	F.Intrinsic.UI.Msgbox("Could not find all files required for this project.")
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+'F.Intrinsic.String.Concat("CREATE TABLE ",V.Ambient.DblQuote,"ATG_ORDER_WO_ASSOC",V.Ambient.DblQuote,"(",V.Ambient.DblQuote,"ORDER",V.Ambient.DblQuote,"CHAR(7) , ",V.Local.sQuery)
+'F.Intrinsic.String.Concat(V.Local.sQuery,V.Ambient.DblQuote,"ORDER_LINE",V.Ambient.DblQuote,"CHAR(4) ,",V.Ambient.DblQuote,"CUSTOMER_PO",V.Ambient.DblQuote," CHAR(15) , ",V.Local.sQuery)
+'F.Intrinsic.String.Concat(V.Local.sQuery,V.Ambient.DblQuote,"JOB",V.Ambient.DblQuote,"CHAR(6) ,",V.Ambient.DblQuote,"SUFFIX",V.Ambient.DblQuote," CHAR(3) , ",V.Local.sQuery)
+'F.Intrinsic.String.Concat(V.Local.sQuery," UNIQUE (",V.Ambient.DblQuote,"ORDER",V.Ambient.DblQuote,", ",V.Ambient.DblQuote,"ORDER_LINE",V.Ambient.DblQuote,", ",V.Ambient.DblQuote,"JOB",V.Ambient.DblQuote,", ",V.Ambient.DblQuote,"SUFFIX",V.Ambient.DblQuote,"));",V.Local.sQuery)
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("create_table_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: ATG_13851_ORDER_WO_ASSOC.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.create_table.End
+
+Program.Sub.associate.Start
+F.Intrinsic.Control.SetErrorHandler("associate_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.bExists.Declare(Boolean)
+V.Local.iCounter.Declare(Long)
+V.Local.sQuery.Declare(String)
+V.Local.iRow.Declare(Long)
+V.Local.iRows.Declare(Long)
+V.Local.sOrder.Declare(String)
+V.Local.sRec.Declare(String)
+V.Local.sCustomer.Declare(String)
+
+V.Local.sQuery.Set(V.Args.sQuery)
+
+F.ODBC.Connection!conX.TableExists("ATG_13851_ORDER_WO_ASSOC",V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,False)
+	F.Intrinsic.Control.CallSub(Create_table)
+F.Intrinsic.Control.EndIf
+
+Gui.F_Order_Assoc.gsfx_Sales_Orders.Rows(1)
+Gui.F_Order_Assoc.gsfx_Sales_Orders.Cols(4)
+Gui.F_Order_Assoc.gsfx_Sales_Orders.SetColumnPercentages(".20:.25:.25:.25")
+
+F.Intrinsic.Control.For(V.Local.iCounter,0,3,1)
+	Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(1,V.Local.iCounter,"FontStyle","Bold",True)
+	Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(1,V.Local.iCounter,"Format","Alignment",4)
+	Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(1,V.Local.iCounter,"Type","Locked",True)
+	Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(2,V.Local.iCounter,"Format","Alignment",2)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(2,0,"Type","Checkbox",True)
+Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(2,1,"Type","Locked",True)
+Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(2,2,"Type","Locked",True)
+Gui.F_Order_Assoc.gsfx_Sales_Orders.BuildStyle(2,3,"Type","Locked",True)
+
+Gui.F_Order_Assoc.gsfx_Sales_Orders.TextMatrix(0,0,"Associate")
+Gui.F_Order_Assoc.gsfx_Sales_Orders.TextMatrix(1,0,"Order Number")
+Gui.F_Order_Assoc.gsfx_Sales_Orders.TextMatrix(2,0,"Order Line")
+Gui.F_Order_Assoc.gsfx_Sales_Orders.TextMatrix(3,0,"Customer")
+Gui.F_Order_Assoc.gsfx_Sales_Orders.ApplyStyle(0,1)
+
+F.ODBC.Connection!conX.OpenLocalRecordsetRO("rstOrders",V.Local.sQuery)
+F.Intrinsic.Control.If(V.ODBC.conX!rstOrders.EOF,<>,True)
+	F.Intrinsic.Control.DoUntil(V.ODBC.conX!rstOrders.EOF,=,True)
+		V.Local.iRow.Set(V.Screen.F_Order_Assoc!gsfx_Sales_Orders.Rows)
+		F.Intrinsic.Math.Add(V.Local.iRow,1,V.Local.iRows)
+		Gui.F_Order_Assoc.gsfx_Sales_Orders.Rows(V.Local.iRows)
+		V.Local.sOrder.Set(V.ODBC.conX!rstOrders.FieldValTrim!ORDER_NO)
+		V.Local.sRec.Set(V.ODBC.conX!rstOrders.FieldValTrim!RECORD_NO)
+		V.Local.sCustomer.Set(V.ODBC.conX!rstOrders.FieldValTrim!CUSTOMER)
+		F.Intrinsic.String.Concat("SELECT * FROM ATG_13851_ORDER_WO_ASSOC WHERE ",V.Ambient.DblQuote,"ORDER",V.Ambient.DblQuote," = '",V.Local.sOrder,"' AND ORDER_LINE = '",V.Local.sRec,"' AND JOB = '",V.Global.sWO,"' AND SUFFIX = '",V.Global.sSuffix,"'",V.Local.sQuery)
+		F.ODBC.Connection!conX.OpenLocalRecordsetRO("rstAssoc",V.Local.sQuery)
+		F.Intrinsic.Control.If(V.ODBC.conX!rstAssoc.EOF,<>,True)
+			Gui.F_Order_Assoc.gsfx_Sales_Orders.textmatrix(0,V.Local.iRow,1)
+		F.Intrinsic.Control.EndIf
+		F.ODBC.conX!rstAssoc.Close
+		Gui.F_Order_Assoc.gsfx_Sales_Orders.TextMatrix(1,V.Local.iRow,V.Local.sOrder)
+		Gui.F_Order_Assoc.gsfx_Sales_Orders.TextMatrix(2,V.Local.iRow,V.Local.sRec)
+		Gui.F_Order_Assoc.gsfx_Sales_Orders.TextMatrix(3,V.Local.iRow,V.Local.sCustomer)
+		Gui.F_Order_Assoc.gsfx_Sales_Orders.ApplyStyle(V.Local.iRow,2)
+		F.ODBC.conX!rstOrders.MoveNext
+	F.Intrinsic.Control.Loop
+	F.ODBC.conX!rstOrders.Close
+	Gui.F_Order_Assoc.gsfx_Sales_Orders.FixedRows(1)
+	Gui.F_Order_Assoc..Show
+	Gui.F_Order_Assoc..Visible(true)
+	Gui.F_Order_Assoc..Enabled(true)
+F.Intrinsic.Control.Else
+	F.Intrinsic.UI.Msgbox("No possible sales order associations found.")
+	F.ODBC.conX!rstOrders.Close
+	F.ODBC.Connection!conX.Close
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Label("associate_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: ATG_13851_ORDER_WO_ASSOC.gas",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	F.Intrinsic.Control.End
+Function.Intrinsic.Control.EndIf
+
+Program.Sub.associate.End
+
+
